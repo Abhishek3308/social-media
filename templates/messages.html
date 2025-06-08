@@ -1,0 +1,199 @@
+{% extends "navbar.html" %}
+{% load static %}
+{% load custom_filters %}
+
+{% block title %}Messages - SocialApp{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-100">
+    <div class="flex h-[calc(100vh-70px)] bg-white rounded-lg shadow-sm">
+        <!-- Left sidebar -->
+        <aside class="w-[350px] border-r border-gray-200 overflow-y-auto">
+            <div class="flex justify-between items-center p-4 border-b border-gray-200">
+                <h2 class="text-xl font-semibold">Messages</h2>
+            </div>
+
+            <div class="relative p-3">
+                <i class="fas fa-search absolute left-6 top-6 text-gray-500 pointer-events-none"></i>
+                <input
+                    type="search"
+                    placeholder="Search..."
+                    class="w-full pl-8 pr-3 py-2 rounded-full border border-gray-300 bg-gray-100"
+                    id="search-users"
+                >
+            </div>
+
+            <!-- Users list -->
+            <nav class="py-1" id="users-list">
+                {% for user in all_users %}
+                    {% if user != request.user %}
+                        {% with convo=conversation_partners|dict_key:user.id %}
+                        <a href="{% if convo %}{% url 'chat_detail' convo.id %}{% else %}{% url 'start_conversation' user.id %}{% endif %}"
+                           class="block hover:bg-gray-100 user-item">
+                            <div class="flex p-3">
+                                <div class="w-12 h-12 rounded-full overflow-hidden mr-3 flex-shrink-0">
+                                    <img src="{{ user.profile_picture.url|default:'/static/images/default-profile.png' }}"
+                                         alt="{{ user.username }}'s profile"
+                                         class="w-full h-full object-cover">
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex justify-between items-center">
+                                        <span class="font-semibold truncate username">{{ user.username }}</span>
+                                        {% if convo and convo.last_message %}
+                                            <time class="text-xs text-gray-500" datetime="{{ convo.last_message.timestamp|date:'c' }}">
+                                                {{ convo.last_message.timestamp|timesince }} ago
+                                            </time>
+                                        {% endif %}
+                                    </div>
+                                    {% if convo and convo.last_message %}
+                                        <p class="text-sm text-gray-500 truncate mt-1">
+                                            {{ convo.last_message.content|truncatechars:30 }}
+                                        </p>
+                                    {% else %}
+                                        <p class="text-sm text-gray-400 mt-1">Start a chat</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </a>
+                        {% endwith %}
+                    {% endif %}
+                {% empty %}
+                    <div class="px-4 py-2 text-gray-500">No users available</div>
+                {% endfor %}
+            </nav>
+        </aside>
+
+        <!-- Right chat section -->
+        <section class="flex-1 flex flex-col">
+            {% if active_conversation %}
+                <header class="p-4 border-b border-gray-200 flex items-center">
+                    <div class="flex items-center">
+                        <div class="w-10 h-10 rounded-full overflow-hidden mr-3">
+                            <img src="{{ active_other_user.profile_picture.url|default:'/static/images/default-profile.png' }}"
+                                 alt="{{ active_other_user.username }}'s profile"
+                                 class="w-full h-full object-cover">
+                        </div>
+                        <h3 class="font-semibold text-lg">{{ active_other_user.username }}</h3>
+                    </div>
+                </header>
+
+                <main id="messages-container" class="flex-1 p-5 overflow-y-auto bg-gray-50">
+                    {% for message in active_conversation.messages.all %}
+                        <article class="max-w-[60%] p-3 rounded-2xl mb-4 break-words
+                            {% if message.sender == request.user %}bg-blue-500 text-white ml-auto{% else %}bg-gray-200 text-gray-900 mr-auto{% endif %}">
+                            <p>{{ message.content }}</p>
+                            <time class="text-xs block text-right mt-1 opacity-80" datetime="{{ message.timestamp|date:'c' }}">
+                                {{ message.timestamp|time }}
+                            </time>
+                        </article>
+                    {% empty %}
+                        <p class="text-center text-gray-500 mt-10">No messages yet. Say hi!</p>
+                    {% endfor %}
+                </main>
+
+                <form id="chat-form" class="flex p-4 border-t border-gray-200" autocomplete="off">
+                    {% csrf_token %}
+                    <input id="chat-message-input"
+                           type="text"
+                           placeholder="Type a message..."
+                           class="flex-1 px-4 py-2 rounded-full border border-gray-300 mr-3"
+                           required>
+                    <button id="chat-message-submit"
+                            type="submit"
+                            class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </form>
+
+                <script>
+                    (() => {
+                        const conversationId = Number("{{ active_conversation.id }}");
+                        const userId = Number("{{ request.user.id }}");
+
+                        const chatSocket = new WebSocket(
+                            (window.location.protocol === "https:" ? "wss://" : "ws://") +
+                            window.location.host + '/ws/chat/' + conversationId + '/'
+                        );
+
+                        const messagesContainer = document.querySelector('#messages-container');
+                        const inputField = document.getElementById('chat-message-input');
+                        const form = document.getElementById('chat-form');
+
+                        function scrollToBottom() {
+                            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                        }
+
+                        scrollToBottom();
+
+                        chatSocket.onmessage = function(e) {
+                            const data = JSON.parse(e.data);
+                            const message = data.message;
+                            const senderId = Number(data.sender_id);
+
+                            const article = document.createElement('article');
+                            article.classList.add('max-w-[60%]', 'p-3', 'rounded-2xl', 'mb-4', 'break-words');
+
+                            if (senderId === userId) {
+                                article.classList.add('bg-blue-500', 'text-white', 'ml-auto');
+                            } else {
+                                article.classList.add('bg-gray-200', 'text-gray-900', 'mr-auto');
+                            }
+
+                            article.innerHTML = `
+                                <p>${message}</p>
+                                <time class="text-xs block text-right mt-1 opacity-80">${new Date().toLocaleTimeString()}</time>
+                            `;
+
+                            messagesContainer.appendChild(article);
+                            scrollToBottom();
+                        };
+
+                        chatSocket.onclose = function() {
+                            console.error('Chat socket closed unexpectedly');
+                        };
+
+                        form.addEventListener('submit', function(e) {
+                            e.preventDefault();
+                            const message = inputField.value.trim();
+                            if (message !== '') {
+                                chatSocket.send(JSON.stringify({ 'message': message }));
+                                inputField.value = '';
+                            }
+                        });
+
+                        inputField.addEventListener('keyup', function(e) {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                form.dispatchEvent(new Event('submit'));
+                            }
+                        });
+                    })();
+                </script>
+            {% else %}
+                <div class="flex flex-col items-center justify-center h-full text-gray-500">
+                    <i class="fas fa-comment-dots text-5xl mb-4 opacity-50"></i>
+                    <h3 class="text-xl font-semibold mb-1">Select a user</h3>
+                    <p>Start a conversation by clicking on a user</p>
+                </div>
+            {% endif %}
+        </section>
+    </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    const searchInput = document.getElementById("search-users");
+    const userItems = document.querySelectorAll("#users-list .user-item");
+
+    searchInput.addEventListener("input", function () {
+        const query = this.value.toLowerCase();
+
+        userItems.forEach(item => {
+            const usernameSpan = item.querySelector(".username");
+            const username = usernameSpan?.textContent?.toLowerCase() || "";
+            item.style.display = username.includes(query) ? "block" : "none";
+        });
+    });
+});
+</script>
+{% endblock %}
