@@ -14,7 +14,6 @@ urlpatterns = [
     # Home view
     path('', views.home_view, name='home'),
     path('profile/', views.profile, name='profile'),
-    path('users/', views.users_list, name='users_list'),
     path('notifications/', views.notifications, name='notifications'),
     path('messages/', views.messages_view, name='messages'),
     path('search/', views.search_view, name='search'),
@@ -24,7 +23,9 @@ urlpatterns = [
     path('watch/', views.watch_view, name='watch'),
     path('memories/', views.memories_view, name='memories'),
     path('explore/', views.explore_view, name='explore'),
-    path('events/', views.events_view, name='events'),
+    path('events/', views.events_view, name='events_view'),
+    path('events/<int:event_id>/',views.event_details, name='event_details'),
+    # gaming URLs
     path('gaming/', views.gaming_view, name='gaming'),
 
 
@@ -49,7 +50,14 @@ urlpatterns = [
     path('start-conversation/<int:user_id>/', views.start_conversation, name='start_conversation'),
     path('messages/<int:conversation_id>/', views.chat_detail, name='chat_detail'),
     path('messages/<int:conversation_id>/send/', views.send_message, name='send_message'),
-    
+    # userlist URLs
+    path('users/', views.users_list, name='users_list'),
+    path('follow/', views.follow_user, name='follow_user'),
+    path('unfollow/', views.unfollow_user, name='unfollow_user'),
+    path('profile/<str:username>/', views.profile_detail, name='profile_detail'),
+    path('followers/<str:username>/', views.follower_list, name='follower_list'),
+    path('following/<str:username>/', views.following_list, name='following_list'),
+    path('post/<int:post_id>/', views.post_detail, name='post_detail'),
     
 
 ]

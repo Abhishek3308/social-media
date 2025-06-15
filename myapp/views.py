@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect
 from django.contrib.auth import login, logout, authenticate , get_user_model
 from django.shortcuts import get_object_or_404
-from .forms import CustomUserCreationForm, CustomLoginForm, StoryForm, PostForm
+from .forms import CustomUserCreationForm, CustomLoginForm, StoryForm, PostForm ,EventForm
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.utils import timezone
@@ -11,7 +11,9 @@ from django.http import HttpResponseForbidden, HttpResponseRedirect
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from collections import defaultdict
-
+from django.core.paginator import Paginator
+import json
+from django.http import JsonResponse
 
 # Create your views here.
 
@@ -148,12 +150,72 @@ def memories_view(request):
 def explore_view(request):
     return render(request, 'explore.html')
 
-def events_view(request):
-    # Render a template for Events page
-    return render(request, 'events.html')
 
+def events_view(request):
+    events = Event.objects.all().order_by('-date')
+    
+    if request.method == 'POST':
+        form = EventForm(request.POST, request.FILES)
+        if form.is_valid():
+            event = form.save(commit=False)
+            event.creator = request.user
+            event.save()
+            return redirect('events_view')
+    else:
+        form = EventForm()
+    
+    return render(request, 'events.html', {
+        'events': events,
+        'form': form
+    })
+
+def event_details(request, event_id):
+    event = get_object_or_404(Event, id=event_id)
+    data = {
+        'title': event.title,
+        'description': event.description,
+        'type': event.event_type,
+        'date': event.date.strftime('%B %d, %Y'),
+        'location': event.location,
+        'image_url': event.image_url,
+        'organizer': event.creator.username
+    }
+    return JsonResponse(data)
+
+
+# gaming views
 def gaming_view(request):
-    return render(request, 'gaming.html')
+    # Initialize session history if not present
+    if "chat_history" not in request.session:
+        request.session["chat_history"] = []
+
+    if request.method == "POST":
+        message = request.POST.get("message", "").strip().lower()
+        response = ""
+
+        # Rule-based bot responses
+        if "game" in message or "suggest" in message:
+            response = "Try out Tic Tac Toe or Snake! 🎮"
+        elif "hello" in message or "hi" in message:
+            response = "Hey gamer! 👋 What can I help you with?"
+        elif "bye" in message:
+            response = "Goodbye! Come back for more games later!"
+        else:
+            response = "Sorry, I didn’t understand that. Try asking for a game suggestion!"
+
+        # Append message-response pair to session chat history
+        chat = request.session["chat_history"]
+        chat.append({
+            "user": message,
+            "bot": response
+        })
+        request.session["chat_history"] = chat
+        request.session.modified = True
+
+    # Pass full history to the template
+    return render(request, "gaming.html", {
+        "chat_history": request.session.get("chat_history", [])
+    })
 
 
 
@@ -458,3 +520,100 @@ def start_conversation(request, user_id):
         conversation.participants.add(request.user, other_user)
 
     return redirect('chat_detail', conversation_id=conversation.id)
+
+
+
+# userlist view
+
+User = get_user_model()
+
+@login_required
+def users_list(request):
+    users = User.objects.exclude(id=request.user.id)  # Exclude self
+    paginator = Paginator(users, 9)  # 9 users per page
+
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
+    return render(request, 'users_list.html', {'users': page_obj})
+
+
+@login_required
+def follow_user(request):
+    if request.method == 'POST':
+        user_id = request.POST.get('user_id')
+        target_user = CustomUser.objects.get(id=user_id)
+        follow, created = Follow.objects.get_or_create(follower=request.user, following=target_user)
+
+        if not created and follow.is_accepted:
+            return JsonResponse({'status': 'already_following'})
+        elif not created and not follow.is_accepted:
+            return JsonResponse({'status': 'request_pending'})
+
+        return JsonResponse({'status': 'follow_request_sent'})
+
+@login_required
+def unfollow_user(request):
+    if request.method == 'POST':
+        user_id = request.POST.get('user_id')
+        Follow.objects.filter(follower=request.user, following_id=user_id).delete()
+        return JsonResponse({'status': 'unfollowed'})
+    
+@login_required
+def profile_detail(request, username):
+    user_profile = get_object_or_404(CustomUser, username=username)
+
+    # Followers and Following
+    followers = Follow.objects.filter(following=user_profile)
+    following = Follow.objects.filter(follower=user_profile)
+
+    # Relationship Status
+    is_following = False
+    is_followed_by = False
+    if user_profile != request.user:
+        is_following = followers.filter(follower=request.user).exists()
+        is_followed_by = following.filter(following=request.user).exists()
+
+    # Fetch posts and stories
+    posts = Post.objects.filter(user=user_profile).order_by('-created_at')
+    stories = Story.objects.filter(user=user_profile).order_by('-created_at')
+
+    context = {
+        'user_profile': user_profile,
+        'follower_count': followers.count(),
+        'following_count': following.count(),
+        'is_following': is_following,
+        'is_followed_by': is_followed_by,
+        'posts': posts,
+        'stories': stories,
+    }
+
+    return render(request, 'profile_detail.html', context)
+
+
+
+User = get_user_model()
+
+def follower_list(request, username):
+    user = get_object_or_404(User, username=username)
+    followers = Follow.objects.filter(following=user).select_related('follower')
+    return render(request, 'followers_list.html', {
+        'user_profile': user,
+        'users': [f.follower for f in followers],
+        'list_type': 'Followers',
+    })
+
+def following_list(request, username):
+    user = get_object_or_404(User, username=username)
+    followings = Follow.objects.filter(follower=user).select_related('following')
+    return render(request, 'followers_list.html', {
+        'user_profile': user,
+        'users': [f.following for f in followings],
+        'list_type': 'Following',
+    })
+
+
+def post_detail(request, post_id):
+    post = get_object_or_404(Post, id=post_id)
+    return render(request, 'post_detail.html', {'post': post})
+

@@ -119,3 +119,44 @@ class Message(models.Model):
 
     def _str_(self):
         return f"{self.sender.username}: {self.content[:20]}"
+    
+
+
+# follow model
+class Follow(models.Model):
+    follower = models.ForeignKey(settings.AUTH_USER_MODEL, related_name='following_set', on_delete=models.CASCADE)
+    following = models.ForeignKey(settings.AUTH_USER_MODEL, related_name='followers_set', on_delete=models.CASCADE)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('follower', 'following')
+
+
+
+class Event(models.Model):
+    EVENT_TYPES = [
+        ('Conference', 'Conference'),
+        ('Workshop', 'Workshop'),
+        ('Networking', 'Networking'),
+        ('Social', 'Social Gathering'),
+        ('Other', 'Other'),
+    ]
+    
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    event_type = models.CharField(max_length=20, choices=EVENT_TYPES)
+    date = models.DateTimeField()
+    location = models.CharField(max_length=200)
+    image = models.ImageField(upload_to='event_images/', blank=True, null=True)
+    creator = models.ForeignKey(User, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    featured = models.BooleanField(default=False)
+
+    def __str__(self):
+        return self.title
+
+    @property
+    def image_url(self):
+        if self.image and hasattr(self.image, 'url'):
+            return self.image.url
+        return 'https://via.placeholder.com/400x250?text=Event'
