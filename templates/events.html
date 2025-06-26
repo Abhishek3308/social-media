@@ -163,12 +163,12 @@
     modalContent.classList.add('opacity-50');
     document.getElementById('modalEventTitle').textContent = 'Loading...';
 
-    fetch(/events/${eventId}/)
+    fetch(`/events/${eventId}/`)
       .then(response => response.json())
       .then(data => {
         document.getElementById('modalEventTitle').textContent = data.title;
         document.getElementById('modalEventType').textContent = data.type;
-        document.getElementById('modalEventDate').innerHTML = <i class="far fa-calendar-alt mr-1"></i> ${data.date};
+        document.getElementById('modalEventDate').innerHTML = `<i class="far fa-calendar-alt mr-1"></i> ${data.date}`;
         document.getElementById('modalEventDescription').textContent = data.description;
         document.getElementById('modalEventLocation').textContent = data.location;
         document.getElementById('organizerName').textContent = data.organizer;
@@ -179,7 +179,11 @@
       })
       .catch(error => {
         console.error('Error loading event details:', error);
-        modalContent.innerHTML = <div class="col-span-2 text-center py-10"><p class="text-red-500">Failed to load event details.</p></div>;
+        modalContent.innerHTML = `
+          <div class="col-span-2 text-center py-10">
+            <p class="text-red-500">Failed to load event details.</p>
+          </div>
+        `;
       });
   }
 
@@ -192,20 +196,29 @@
     const dateFilter = document.getElementById('filterDate').value;
     const container = document.getElementById('eventsContainer');
 
-    container.innerHTML = <div class="col-span-3 text-center py-10"><p class="text-gray-500">Loading events...</p></div>;
+    container.innerHTML = `
+      <div class="col-span-3 text-center py-10">
+        <p class="text-gray-500">Loading events...</p>
+      </div>
+    `;
 
     setTimeout(() => {
-      fetch(/events/?type=${typeFilter}&date=${dateFilter})
+      fetch(`/events/?type=${typeFilter}&date=${dateFilter}`)
         .then(response => response.json())
         .then(data => {
-          // Ideally: render data dynamically here
-          window.location.reload(); // fallback until dynamic rendering is implemented
+          // TODO: Render filtered events dynamically
+          window.location.reload(); // fallback
         })
         .catch(error => {
           console.error('Error filtering events:', error);
-          container.innerHTML = <div class="col-span-3 text-center py-10"><p class="text-red-500">Error loading events.</p></div>;
+          container.innerHTML = `
+            <div class="col-span-3 text-center py-10">
+              <p class="text-red-500">Error loading events.</p>
+            </div>
+          `;
         });
     }, 500);
   }
 </script>
+
 {% endblock %}

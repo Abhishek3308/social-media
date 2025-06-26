@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect
 from django.contrib.auth import login, logout, authenticate , get_user_model
 from django.shortcuts import get_object_or_404
-from .forms import CustomUserCreationForm, CustomLoginForm, StoryForm, PostForm ,EventForm
+from .forms import CustomUserCreationForm, CustomLoginForm, StoryForm, PostForm , EventForm
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.utils import timezone
@@ -11,19 +11,28 @@ from django.http import HttpResponseForbidden, HttpResponseRedirect
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from collections import defaultdict
+from django.views.decorators.http import require_POST
 from django.core.paginator import Paginator
-import json
-from django.http import JsonResponse
+import logging
+from django.db.models import Count, IntegerField, ExpressionWrapper, F
+from django.utils.timezone import now
 
 # Create your views here.
 
-
+@login_required
 def home_view(request):
     now = timezone.now()
-    stories = Story.objects.filter(created_at__gte=now - timedelta(hours=24)).select_related('user').order_by('user', '-created_at')
-    posts = Post.objects.all().order_by('-created_at')
-    post_form = PostForm()
 
+    # Get recent stories (last 24 hrs)
+    stories = Story.objects.filter(
+        created_at__gte=now - timedelta(hours=24)
+    ).select_related('user').order_by('user', '-created_at')
+
+    # Get all posts ordered by newest first
+    posts = Post.objects.all().order_by('-created_at')
+
+    # Handle post creation
+    post_form = PostForm()
     if request.method == 'POST':
         post_form = PostForm(request.POST, request.FILES)
         if post_form.is_valid():
@@ -35,22 +44,22 @@ def home_view(request):
     # Group stories by user
     story_groups = []
     user_stories_dict = defaultdict(list)
-    
-    # Group stories by user
     for story in stories:
         user_stories_dict[story.user].append(story)
-    
-    # Convert to list of tuples (user, stories_list)
     for user, user_stories in user_stories_dict.items():
         story_groups.append((user, user_stories))
 
+    # Suggest users to follow (exclude self + already followed)
+    following_ids = Follow.objects.filter(follower=request.user).values_list('following_id', flat=True)
+    suggestions = CustomUser.objects.exclude(id__in=following_ids).exclude(id=request.user.id).order_by('?')[:5]
+
     context = {
-        'story_groups': story_groups,  # This is what your template expects
+        'story_groups': story_groups,
         'posts': posts,
         'post_form': post_form,
+        'suggestions': suggestions,
     }
     return render(request, 'home.html', context)
-
 
 def signup_view(request):
     if request.method == 'POST':
@@ -80,8 +89,6 @@ def login_view(request):
         form = CustomLoginForm()
     return render(request, 'login.html', {'form': form})
 
-
-
 def logout_view(request):
     logout(request)
     return redirect('login')
@@ -93,32 +100,74 @@ def logout_view(request):
 
 
 @login_required
-def profile(request):
-    user = request.user
+@login_required
+def profile(request, username=None):
+    # View either own profile or someone else's
+    if username:
+        profile_user = get_object_or_404(User, username=username)
+    else:
+        profile_user = request.user
 
-    if request.method == 'POST':
-        # Split full name into first and last names if provided
+    # 🔍 Track profile view (avoid self-viewing and duplicate within 24h)
+    if request.user != profile_user:
+        time_threshold = now() - timedelta(hours=24)
+        already_viewed = ProfileView.objects.filter(
+            viewer=request.user,
+            viewed_user=profile_user,
+            timestamp__gte=time_threshold
+        ).exists()
+
+        if not already_viewed:
+            ProfileView.objects.create(viewer=request.user, viewed_user=profile_user)
+
+    # 🧠 Handle profile update (only if own profile)
+    if request.method == 'POST' and request.user == profile_user:
         full_name = request.POST.get('name', '')
         if full_name:
             parts = full_name.strip().split(' ', 1)
-            user.first_name = parts[0]
-            user.last_name = parts[1] if len(parts) > 1 else ''
+            profile_user.first_name = parts[0]
+            profile_user.last_name = parts[1] if len(parts) > 1 else ''
 
-        user.email = request.POST.get('email', user.email)
-        user.location = request.POST.get('location', user.location)
-        user.bio = request.POST.get('bio', user.bio)
+        profile_user.email = request.POST.get('email', profile_user.email)
+        profile_user.location = request.POST.get('location', profile_user.location)
+        profile_user.bio = request.POST.get('bio', profile_user.bio)
 
         if 'profile_picture' in request.FILES:
-            user.profile_picture = request.FILES['profile_picture']
+            profile_user.profile_picture = request.FILES['profile_picture']
 
-        user.save()
+        if 'cover_photo' in request.FILES:
+            profile_user.cover_photo = request.FILES['cover_photo']
+
+        is_public = request.POST.get('is_public')
+        profile_user.is_public = True if is_public == 'on' else False
+
+        profile_user.save()
         return redirect('profile')
 
-    return render(request, 'profile.html', {'user': user})
+    # 📊 Followers and following count
+    followers_count = Follow.objects.filter(following=profile_user).count()
+    following_count = Follow.objects.filter(follower=profile_user).count()
+
+    # 🖼 Recent posts
+    recent_posts = Post.objects.filter(user=profile_user).order_by('-created_at')[:6]
+
+    # 👀 Recent profile views (last 7 days)
+    recent_views_count = ProfileView.objects.filter(
+        viewed_user=profile_user,
+        timestamp__gte=now() - timedelta(days=7)
+    ).count()
+
+    context = {
+        'profile_user': profile_user,
+        'followers_count': followers_count,
+        'following_count': following_count,
+        'recent_posts': recent_posts,
+        'recent_views_count': recent_views_count,
+    }
+
+    return render(request, 'profile.html', context)
 
 
-def users_list(request):
-    return render(request, 'users_list.html')
 
 def notifications(request):
     return render(request, 'notifications.html')
@@ -146,77 +195,6 @@ def watch_view(request):
 
 def memories_view(request):
     return render(request, 'memories.html')
-
-def explore_view(request):
-    return render(request, 'explore.html')
-
-
-def events_view(request):
-    events = Event.objects.all().order_by('-date')
-    
-    if request.method == 'POST':
-        form = EventForm(request.POST, request.FILES)
-        if form.is_valid():
-            event = form.save(commit=False)
-            event.creator = request.user
-            event.save()
-            return redirect('events_view')
-    else:
-        form = EventForm()
-    
-    return render(request, 'events.html', {
-        'events': events,
-        'form': form
-    })
-
-def event_details(request, event_id):
-    event = get_object_or_404(Event, id=event_id)
-    data = {
-        'title': event.title,
-        'description': event.description,
-        'type': event.event_type,
-        'date': event.date.strftime('%B %d, %Y'),
-        'location': event.location,
-        'image_url': event.image_url,
-        'organizer': event.creator.username
-    }
-    return JsonResponse(data)
-
-
-# gaming views
-def gaming_view(request):
-    # Initialize session history if not present
-    if "chat_history" not in request.session:
-        request.session["chat_history"] = []
-
-    if request.method == "POST":
-        message = request.POST.get("message", "").strip().lower()
-        response = ""
-
-        # Rule-based bot responses
-        if "game" in message or "suggest" in message:
-            response = "Try out Tic Tac Toe or Snake! 🎮"
-        elif "hello" in message or "hi" in message:
-            response = "Hey gamer! 👋 What can I help you with?"
-        elif "bye" in message:
-            response = "Goodbye! Come back for more games later!"
-        else:
-            response = "Sorry, I didn’t understand that. Try asking for a game suggestion!"
-
-        # Append message-response pair to session chat history
-        chat = request.session["chat_history"]
-        chat.append({
-            "user": message,
-            "bot": response
-        })
-        request.session["chat_history"] = chat
-        request.session.modified = True
-
-    # Pass full history to the template
-    return render(request, "gaming.html", {
-        "chat_history": request.session.get("chat_history", [])
-    })
-
 
 
 # story views
@@ -362,22 +340,27 @@ def share_story(request, story_id):
 
 # post views
 @login_required
-@csrf_exempt  # Ideally handle CSRF properly in AJAX
+@require_POST
 def like_post(request, post_id):
-    if request.method == 'POST':
-        post = get_object_or_404(Post, id=post_id)
-        user = request.user
+    post = get_object_or_404(Post, id=post_id)
+    user = request.user
 
-        if user in post.likes.all():
-            post.likes.remove(user)
-            liked = False
-        else:
-            post.likes.add(user)
-            liked = True
+    # Check if user already liked the post
+    liked = user in post.likes.all()
+    
+    # Toggle like status
+    if liked:
+        post.likes.remove(user)
+        liked = False
+    else:
+        post.likes.add(user)
+        liked = True
 
-        return JsonResponse({'liked': liked, 'total_likes': post.likes.count()})
-
-    return JsonResponse({'error': 'Invalid request method'}, status=405)
+    return JsonResponse({
+        'liked': liked,
+        'total_likes': post.likes.count(),
+        'status': 'success'
+    })
 
 
 @login_required
@@ -407,8 +390,6 @@ def delete_post(request, post_id):
         post.delete()
     return redirect('home')  # Redirect back to home after deletion
 
-
-# message views
 
 # message views
 
@@ -485,8 +466,6 @@ def chat_detail(request, conversation_id):
     }
 
     return render(request, 'messages.html', context)
-
-
 
 
 @login_required
@@ -612,8 +591,108 @@ def following_list(request, username):
         'list_type': 'Following',
     })
 
+@login_required
+def homefollow_user(request, user_id):
+    user_to_follow = get_object_or_404(CustomUser, id=user_id)
+    if user_to_follow != request.user:
+        Follow.objects.get_or_create(follower=request.user, following=user_to_follow)
+    return redirect('home')
 
 def post_detail(request, post_id):
     post = get_object_or_404(Post, id=post_id)
     return render(request, 'post_detail.html', {'post': post})
 
+
+
+# gaming views
+def gaming_view(request):
+    # Initialize session history if not present
+    if "chat_history" not in request.session:
+        request.session["chat_history"] = []
+
+    if request.method == "POST":
+        message = request.POST.get("message", "").strip().lower()
+        response = ""
+
+        # Rule-based bot responses
+        if "game" in message or "suggest" in message:
+            response = "Try out Tic Tac Toe or Snake! 🎮"
+        elif "hello" in message or "hi" in message:
+            response = "Hey gamer! 👋 What can I help you with?"
+        elif "bye" in message:
+            response = "Goodbye! Come back for more games later!"
+        else:
+            response = "Sorry, I didn’t understand that. Try asking for a game suggestion!"
+
+        # Append message-response pair to session chat history
+        chat = request.session["chat_history"]
+        chat.append({
+            "user": message,
+            "bot": response
+        })
+        request.session["chat_history"] = chat
+        request.session.modified = True
+
+    # Pass full history to the template
+    return render(request, "gaming.html", {
+        "chat_history": request.session.get("chat_history", [])
+    })
+
+
+
+# events views
+def events_view(request):
+    events = Event.objects.all().order_by('-date')
+    
+    if request.method == 'POST':
+        form = EventForm(request.POST, request.FILES)
+        if form.is_valid():
+            event = form.save(commit=False)
+            event.creator = request.user
+            event.save()
+            return redirect('events_view')
+    else:
+        form = EventForm()
+    
+    return render(request, 'events.html', {
+        'events': events,
+        'form': form
+    })
+
+def event_details(request, event_id):
+    event = get_object_or_404(Event, id=event_id)
+    data = {
+        'title': event.title,
+        'description': event.description,
+        'type': event.event_type,
+        'date': event.date.strftime('%B %d, %Y'),
+        'location': event.location,
+        'image_url': event.image_url,
+        'organizer': event.creator.username
+    }
+    return JsonResponse(data)
+
+
+
+# explore view
+def explore_view(request):
+    now = timezone.now()
+    time_threshold = now - timedelta(hours=48)  # Last 48 hours
+
+    trending_posts = (
+        Post.objects.filter(created_at__gte=time_threshold)
+        .annotate(
+            like_count=Count('likes', distinct=True),
+            comment_count=Count('comments', distinct=True),
+            popularity_score=ExpressionWrapper(
+                Count('likes', distinct=True) + Count('comments', distinct=True),
+                output_field=IntegerField()
+            )
+        )
+        .order_by('-popularity_score', '-created_at')[:20]  # Top 20 by popularity
+    )
+
+    context = {
+        'trending_posts': trending_posts,
+    }
+    return render(request, 'explore.html', context)

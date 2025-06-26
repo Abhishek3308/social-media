@@ -1,6 +1,6 @@
 from django.urls import path
 from . import views
-
+from django.contrib.auth import views as auth_views
 
 urlpatterns = [
 
@@ -15,18 +15,12 @@ urlpatterns = [
     path('', views.home_view, name='home'),
     path('profile/', views.profile, name='profile'),
     path('notifications/', views.notifications, name='notifications'),
-    path('messages/', views.messages_view, name='messages'),
     path('search/', views.search_view, name='search'),
     path('friends/', views.friends_view, name='friends'),
     path('saved/', views.saved_view, name='saved'),
     path('groups/', views.groups_view, name='groups'),
     path('watch/', views.watch_view, name='watch'),
     path('memories/', views.memories_view, name='memories'),
-    path('explore/', views.explore_view, name='explore'),
-    path('events/', views.events_view, name='events_view'),
-    path('events/<int:event_id>/',views.event_details, name='event_details'),
-    # gaming URLs
-    path('gaming/', views.gaming_view, name='gaming'),
 
 
 
@@ -50,6 +44,8 @@ urlpatterns = [
     path('start-conversation/<int:user_id>/', views.start_conversation, name='start_conversation'),
     path('messages/<int:conversation_id>/', views.chat_detail, name='chat_detail'),
     path('messages/<int:conversation_id>/send/', views.send_message, name='send_message'),
+
+
     # userlist URLs
     path('users/', views.users_list, name='users_list'),
     path('follow/', views.follow_user, name='follow_user'),
@@ -57,7 +53,50 @@ urlpatterns = [
     path('profile/<str:username>/', views.profile_detail, name='profile_detail'),
     path('followers/<str:username>/', views.follower_list, name='follower_list'),
     path('following/<str:username>/', views.following_list, name='following_list'),
+    path('follow/<int:user_id>/', views.homefollow_user, name='homefollow_user'),
     path('post/<int:post_id>/', views.post_detail, name='post_detail'),
     
+
+    # gaming URLs
+    path('gaming/', views.gaming_view, name='gaming'),
+
+
+    # events URLs
+    path('events/', views.events_view, name='events_view'),
+    path('events/<int:event_id>/',views.event_details, name='event_details'),
+
+    # explore URLs
+    path('explore/', views.explore_view, name='explore'),
+
+
+    # password reset URLs
+    path('change-password/', auth_views.PasswordChangeView.as_view(
+        template_name='change_password.html',
+        success_url='/profile/'  # or any page after successful change
+    ), name='change_password'),
+
+    # Forgot password flow
+    path('password-reset/', auth_views.PasswordResetView.as_view(
+        template_name='password_reset_form.html'
+    ), name='password_reset'),
+
+    path('password-reset/done/', auth_views.PasswordResetDoneView.as_view(
+        template_name='password_reset_done.html'
+    ), name='password_reset_done'),
+
+    path('reset/<uidb64>/<token>/', auth_views.PasswordResetConfirmView.as_view(
+        template_name='password_reset_confirm.html'
+    ), name='password_reset_confirm'),
+
+    path('reset/done/', auth_views.PasswordResetCompleteView.as_view(
+        template_name='password_reset_complete.html'
+    ), name='password_reset_complete'),
+
+
+
+# profile URLs
+    path('profile/', views.profile, name='profile'),
+    path('profile/<str:username>/', views.profile, name='user_profile'),
+
 
 ]
